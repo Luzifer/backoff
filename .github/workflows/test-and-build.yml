@@ -1,0 +1,79 @@
+---
+
+name: test-and-build
+on:
+  push:
+    branches: ['*']
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  test-and-build:
+    defaults:
+      run:
+        shell: bash
+
+    container:
+      image: luzifer/archlinux
+      env:
+        CGO_ENABLED: 0
+        GOPATH: /go
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install required packages
+        run: |
+          pacman -Syy --noconfirm \
+            awk \
+            curl \
+            diffutils \
+            git \
+            go \
+            make \
+            tar \
+            trivy \
+            unzip \
+            which \
+            zip
+
+      - uses: actions/checkout@v3
+
+      - name: Marking workdir safe
+        run: git config --global --add safe.directory /__w/backoff/backoff
+
+      - name: Build release
+        run: make publish
+        env:
+          FORCE_SKIP_UPLOAD: 'true'
+          MOD_MODE: readonly
+          NO_TESTS: 'true'
+          PACKAGES: '.'
+
+      - name: Execute Trivy scan
+        run: |
+          trivy fs . \
+            --dependency-tree \
+            --exit-code 1 \
+            --format table \
+            --ignore-unfixed \
+            --quiet \
+            --scanners config,license,secret,vuln \
+            --severity HIGH,CRITICAL \
+            --skip-dirs docs
+
+      - name: Extract changelog
+        run: 'awk "/^#/ && ++c==2{exit}; /^#/f" "History.md" | tail -n +2 >release_changelog.md'
+
+      - name: Release
+        uses: ncipollo/release-action@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          artifacts: '.build/*'
+          bodyFile: release_changelog.md
+          draft: false
+          generateReleaseNotes: false
+
+...
